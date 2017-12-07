@@ -46,16 +46,22 @@ convert_join <- function(df) {
 sfcentroids = coordinates(taz.sf)
 centroid2taz = cbind(taz.sf@data, sfcentroids)
 names(centroid2taz)[c(4,5)] = c('Longitude', 'Latitude')
-centroid2taz$TAZ = as.numeric(centroid2taz$TAZ)
+centroid2taz = centroid2taz %>% 
+  mutate(TAZ = as.numeric(TAZ)) %>% 
+  transform(geoloc =  paste(Latitude, Longitude, sep="+"))
+
+
 
 
 #random gps points
 rando = read_excel('Random-SF-Locations.xlsx') %>% 
   transform(geoloc=paste(Latitude, Longitude, sep="+"))
-key = 'AIzaSyCzHKDj9bsmhkS3o300TL9VET0XwywQJjs'	
+#carrol's
+#key = 'AIzaSyAejZ8T9sQkQgWHDPZYLKxozSkeo0laK_o'
+
 
 #ieor142 key
-#key = "AIzaSyCtM0KUEC1PiENc5ivhEPSo9PPoKLRJ3Hk"
+key = "AIzaSyCtM0KUEC1PiENc5ivhEPSo9PPoKLRJ3Hk"
 coord.rand = rando
 #coordinates(coord.rand) = ~Latitude + Longitude 
 
@@ -71,6 +77,7 @@ pop.rideshare = rideshare %>%
   mutate(rides = pickups + dropoffs) %>% 
   summarise(tot.rides = sum(rides)) %>% 
   arrange(desc(tot.rides)) %>% 
+  left_join(centroid2taz, by = c('taz' = 'TAZ')) %>% 
   head(20)
 
 #sort day + hour combinations by popularity
@@ -78,9 +85,9 @@ time.rideshare = pop.rideshare   %>%
   left_join(rideshare) %>% 
   left_join(centroid2taz, by = c('taz' = 'TAZ')) %>% 
   group_by(day_of_week, hour) %>% 
-  mutate(combined.rides = pickups + dropoffs, hour.new = hour-3) %>% 
+  mutate(combined.rides = pickups + dropoffs) %>% 
   arrange(desc(combined.rides)) %>% 
-  transform(geoloc=paste(Latitude, Longitude, sep="+"), DayHour = paste(day_of_week, hour, sep="D")) %>% 
+  transform(DayHour = paste(day_of_week, hour, sep="D")) %>% 
   select(-c(taz, tot.rides, hour), taz)
 
 View(time.rideshare)
@@ -90,11 +97,9 @@ ggplot(time.rideshare, aes(DayHour, combined.rides)) + geom_col() + ylab('Total 
 #popular hours
 pop.hours = time.rideshare %>% 
   group_by(hour) %>% 
-  summarise(combined.rides= mean(combined.rides)) %>% 
-  mutate(hour.new = hour - 3) 
-  
+  summarise(combined.rides= mean(combined.rides)) 
 #plot popular hours
-ggplot(pop.hours, aes(hour.new, combined.rides)) + geom_col(fill = 'lightblue') + geom_text(aes(label = round(combined.rides))) +
+ggplot(pop.hours, aes(hou, combined.rides)) + geom_col(fill = 'lightblue') + geom_text(aes(label = round(combined.rides))) +
   ylab('Average # of Rides During Each Hour Per TAZ') + xlab('Hour')
 
 #popular days
@@ -108,8 +113,9 @@ ggplot(pop.days, aes(day_of_week, combined.rides)) + geom_col(fill = 'orange') +
 joined = convert_join(time.rideshare)
 
 #overlay plots
-plot(joined[[1]], col = 'darkgreen',add= TRUE,  pch= 13, axes = TRUE)
 plot(taz.sf, axes = TRUE, border = 'lightgray')
+plot(joined[[1]], col = 'darkgreen',add= TRUE,  pch= 13, axes = TRUE)
+
 
 
 ##EDIT DEP TIME
@@ -124,62 +130,65 @@ time.car = list()
 time.car.list  = list()
 
 #run to find trip duration for different 
-for (a in c(10, 20)){
-  
+for (a in c(10,20)) {
   for (i in 1:16){
-    carmat = gmapsdistance(time.rideshare$geoloc[a-9:a], time.rideshare$geoloc[a-9:a], mode = 'driving', shape = 'long',
-                           ,key  = key, departure = time_vec.int[i])
+    carmat = gmapsdistance(pop.rideshare$geoloc[(a-9):a], pop.rideshare$geoloc[(a-9):a], 
+                           shape = 'long', mode = 'driving', departure = time_vec.int[i])    
     time.car[[i]]= carmat[[1]] %>% 
       cbind(Dep_Time.pst  = format(as.POSIXct(as.character(time_vec[i]), tz = 'GMT'), tz = 'PST8PDT'))
     print(i)
     Sys.sleep(3)
   }
   time.car.list[[a/10]] = time.car
-  print(a)
-  
+  print('--------')
 }
-#make a large dataframe with all car time
-time.car.final = rbindlist(time.car.list[[2]])
-write.csv(time.car.final, 'car1120.csv')
+
+
+all.car = rbind(rbindlist(time.car.list[[1]]), rbindlist(time.car.list[[1]]))
+#write.csv(all.car, 'car_time.csv')
+all.car = read.csv('car_time.csv') %>% 
+  select(-c(X, X.1))
 
 time.transit = list()
 time.transit.list = list()
 for (a in c(10,20)){
-  for (j in 1:16){
-    transitmat = gmapsdistance(time.rideshare$geoloc[a-9:a], time.rideshare$geoloc[a-9:a], key = key,
+  for (j in 7:16){
+    transitmat = gmapsdistance(pop.rideshare$geoloc[(a-9):a], pop.rideshare$geoloc[(a-9):a], key = key,
                                shape = 'long', mode = 'transit', departure = time_vec.int[j])
     time.transit[[j]]= transitmat[[1]] %>% 
       cbind(Dep_Time.pst  = format(as.POSIXct(as.character(time_vec[j]), tz = 'GMT'), tz = 'PST8PDT'))
     Sys.sleep(3)
     print(j)
   }
-  time.transit.list[[a/10]] = time.transit[[a/10]]
-  print(a)
+  time.transit.list[[a/10]] = time.transit
+  print("------")
 }
 
 
 #make a large dataframe with all transit time
-time.transit.List1 = time.transit #has all times for geoloc[1:10]
-
-time.transit.final = rbindlist(time.transit.List)
-write.csv(rbindlist(time.transit.List1), 'transit110.csv')
-
+# time.transit.List1#has all times for geoloc[1:10]
+# write.csv(rbindlist(time.transit.list[[2]]), 'transit1120.csv')
+# write.csv(rbindlist(time.transit.List1), 'transit110.csv')
+time.transit.final = rbind(rbindlist(time.transit.list[[1]]), rbindlist(time.transit.list[[2]]))
+write.csv(time.transit.final, 'transit_time.csv')
+all.transit = read.csv('transit_time.csv')
 
 #calculate delta
-df = carmat[[1]] %>% 
-  merge(transitmat[[1]], by = c('or' = 'or', 'de' = 'de')) %>% 
-  left_join(rando, by = c('or' = 'geoloc')) %>% 
-  mutate(CarTime = Time.x, TransitTime = Time.y, delta = TransitTime - CarTime) %>% 
-  select(-c(Time.x, Time.y), Orig.Lat = Latitude, Orig.Lon = Longitude, Orig.Address = Address )  
+df = all.car %>% 
+  merge(all.transit, by = c('or' = 'or', 'de' = 'de', 'Dep_Time.pst' = 'Dep_Time.pst'))%>% 
+  mutate(CarTime = Time.x, TransitTime = Time.y, delta = TransitTime - CarTime, min.delta = delta/60) %>% 
+  filter(CarTime!=0, TransitTime !=0) %>% 
+  arrange(desc(delta)) %>% 
+  left_join(centroid2taz, by = c('or' = 'geoloc')) %>% 
+  select(-c(Time.x, Time.y, X, COUNT, FIRST_COUN), Orig.Lat = Latitude, Orig.Lon = Longitude, Orig.taz = TAZ)
 
 #join address to latlon and prepare data for heatmap
-all.table = left_join(df, rando, by = c('de' = 'geoloc')) %>% 
-  select(everything(),Dest.Address = Address, Dest.Lat = Latitude, Dest.Lon = Longitude) %>% 
-  arrange(desc(delta)) %>% 
-  mutate(Orig.Addr = gsub('(, San Fran).*$', '', Orig.Address), Dest.Addr = gsub('(, San Fran).*$', '', Dest.Address), 
-         min.delta =delta/60)
+all.table = left_join(df, centroid2taz, by = c('de' = 'geoloc')) %>% 
+  select(Dest.taz = TAZ, Dest.Lat = Latitude, Dest.Lon = Longitude,everything(), -c(COUNT, FIRST_COUN, or, de))%>% 
+  arrange(desc(delta))
+
 #generate heatmap
-ggplot(all.table, aes(Orig.Addr, Dest.Addr)) + geom_tile(aes(fill = min.delta), color = "white") +
+ggplot(all.table, aes(as.factor(Orig.taz), as.factor(Dest.taz))) + geom_tile(aes(fill = min.delta), color = "white") +
   scale_fill_gradient(low = "white", high = 'magenta4') +
   ylab("Origin ") +
   xlab("Destination") + labs(fill = "Minutes Longer", title= 'Public Transit vs Driving Trip Duration') +
